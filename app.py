@@ -381,79 +381,7 @@ if enable_super and month_cols:
         })
     else:
         super_outputs.update({"XYZ_Familia": xyz_fam, "SuperABC_Familia": super_fam,
-                              "Resumen_SúperABC_Familia": fam_super_res})
-
-# ========= NUEVO: Propagar ABC/XYZ de Familia → SKUs =========
-st.subheader("Propagación de clases de **Familia** hacia **SKUs**")
-
-# 1) ABC de familia ya está en abc_fam. Tomamos (Familia_Key, Clase_ABC) y renombramos a ABC_Familia
-fam_classes = abc_fam[["Familia_Key", "Clase_ABC"]].rename(columns={"Clase_ABC":"ABC_Familia"})
-
-# 2) XYZ por familia (para propagar)
-xyz_fam_for_prop = None
-months_for_fam_xyz = []
-if enable_super and month_cols:
-    months_for_fam_xyz = month_cols
-else:
-    months_for_fam_xyz = detect_month_cols(df.columns)
-    months_for_fam_xyz = [c for c in months_for_fam_xyz if c in df.columns][-12:]
-
-if months_for_fam_xyz:
-    fam_month_prop = df[[fam_key_source] + months_for_fam_xyz].copy()
-    fam_month_prop["Familia_Key"] = normalize_text(fam_month_prop[fam_key_source])
-    xyz_fam_for_prop = xyz_from_wide(fam_month_prop, ["Familia_Key"], months_for_fam_xyz, level_name="Familia_Key")
-    fam_classes = fam_classes.merge(xyz_fam_for_prop[["Familia_Key","Clase_XYZ"]], on="Familia_Key", how="left")
-    fam_classes = fam_classes.rename(columns={"Clase_XYZ":"XYZ_Familia"})
-    st.caption(f"XYZ de familia calculado con columnas: {', '.join(map(str, months_for_fam_xyz))}")
-else:
-    fam_classes["XYZ_Familia"] = np.nan
-    st.warning("No se encontraron columnas de **meses** para calcular XYZ por familia.")
-
-# 3) Propagar a TODOS los SKUs (tabla abc_sku_todos)
-sku_prop = (abc_sku_todos
-            .merge(fam_classes, on="Familia_Key", how="left")
-            .merge(fam_meta, on="Familia_Key", how="left"))
-
-sku_prop["SuperABC_Familia"] = sku_prop["ABC_Familia"].fillna("C") + sku_prop["XYZ_Familia"].fillna("Z")
-
-# --- NUEVO: selección segura de columnas para evitar KeyError ---
-cols_sku_prop = ["Familia_Cod","Familia_Nombre","Familia_Key","SKU",
-                 "Clase_ABC_SKU","ABC_Familia","XYZ_Familia","SuperABC_Familia"]
-
-# Crea vacías las que falten (para no romper el display/export)
-for c in cols_sku_prop:
-    if c not in sku_prop.columns:
-        sku_prop[c] = np.nan
-
-cols_present = [c for c in cols_sku_prop if c in sku_prop.columns]
-missing = [c for c in cols_sku_prop if c not in sku_prop.columns]
-
-if missing:
-    st.info("Columnas no disponibles en esta corrida y se completaron vacías: " + ", ".join(missing))
-
-st.dataframe(sku_prop[cols_present], use_container_width=True)
-
-# Gráfico distribución de SuperABC_Familia en SKUs
-dist_super_fam = (sku_prop.groupby("SuperABC_Familia").size()
-                  .rename("SKUs").reset_index().sort_values("SuperABC_Familia"))
-st.altair_chart(
-    alt.Chart(dist_super_fam).mark_bar().encode(
-        x=alt.X("SuperABC_Familia:N", title="Categoría (ABC/XYZ) de la *familia*"),
-        y=alt.Y("SKUs:Q", scale=alt.Scale(domainMin=0), title="SKUs"),
-        tooltip=["SuperABC_Familia:N", "SKUs:Q"]
-    ),
-    use_container_width=True
-)
-# Gráfico distribución de SuperABC_Familia en SKUs
-dist_super_fam = (sku_prop.groupby("SuperABC_Familia").size()
-                  .rename("SKUs").reset_index().sort_values("SuperABC_Familia"))
-st.altair_chart(
-    alt.Chart(dist_super_fam).mark_bar().encode(
-        x=alt.X("SuperABC_Familia:N", title="Categoría (ABC/XYZ) de la *familia*"),
-        y=alt.Y("SKUs:Q", scale=alt.Scale(domainMin=0), title="SKUs"),
-        tooltip=["SuperABC_Familia:N", "SKUs:Q"]
-    ), use_container_width=True
-)
+                              "Resumen_SuperABC_Familia": fam_super_res})
 
 # ================ Necesidades de almacén =================
 volumen_df = pd.DataFrame()
@@ -489,13 +417,11 @@ if enable_wh:
             wh = sku_a.merge(dem[[col_sku,"Demanda_Mensual"]], left_on="SKU", right_on=col_sku, how="left")\
                       .merge(info, left_on="SKU", right_on=col_sku, how="left")
 
-            # Lead time → cobertura (convierte a meses si LT está en días)
-            if 'lt_col' in locals() and lt_col:
+            # --- Lead time → cobertura (convierte a meses si LT está en días) ---
+            if lt_col:
                 lt_series = df[[col_sku, lt_col]].drop_duplicates()
                 lt_series[lt_col] = to_num(lt_series[lt_col])
-                # Selección de unidad (guardada en el form)
-                if 'lt_unit' in locals() and lt_unit == "Días":
-                    days_per_month = locals().get('days_per_month', 30)
+                if lt_unit == "Días":
                     lt_series["_LT_meses"] = lt_series[lt_col] / float(days_per_month)
                 else:
                     lt_series["_LT_meses"] = lt_series[lt_col]
@@ -539,6 +465,11 @@ if enable_wh:
             c1.metric("Necesidad total (UNIDADES)", f"{total_unid:,.0f}")
             c2.metric("Necesidad total (M2)", f"{total_m2:,.2f}")
             c3.metric("SKUs M2 con Volumen=999 (excluidos)", f"{excl_999:,}")
+            st.caption(
+                f"Cobertura calculada desde LT en **{lt_unit.lower()}**"
+                f"{' (dividido entre ' + str(days_per_month) + ' días/mes)' if lt_unit=='Días' else ''} "
+                "usando tu tabla (interpolación lineal)."
+            )
 
             # Mostrar tablas (columnas seguras)
             cols_u = ["Familia_Key","SKU","Demanda_Mensual","Cobertura_Meses","Necesidad_Unidades"]
@@ -561,35 +492,26 @@ if enable_wh:
 st.divider(); st.subheader("Descargar resultados (Excel)")
 buffer = BytesIO()
 with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-    # ABC Familias
     abc_fam[cols_lvl1].to_excel(writer, index=False, sheet_name="ABC_Familia")
     (res_fam.reset_index().rename(columns={"index":"Clase_ABC","% Ingresos":"Pct_Ventas"})).to_excel(writer, index=False, sheet_name="Resumen_Familia")
-
-    # ABC SKU N2 y todos
     if not sub_base.empty and not abc_sku_n2.empty:
         abc_sku_n2.to_excel(writer, index=False, sheet_name="ABC_SKU_N2")
     abc_sku_todos.to_excel(writer, index=False, sheet_name="ABC_SKU_Todos")
-
-    # Propagación Familia→SKU
-    sku_prop.to_excel(writer, index=False, sheet_name="SKU_desde_Familia")
-    dist_super_fam.to_excel(writer, index=False, sheet_name="Resumen_SuperABC_Fam_SKU")
-
-    # Súper ABC (si lo calculaste)
+    resumen_conteos = pd.DataFrame([
+        ["SKUs post-filtro", skus_total_filtrados],
+        [f"SKUs en familias {','.join(clases_n2)} (Nivel 2)", skus_n2],
+        ["Familias post-filtro", familias_total_filtradas],
+    ], columns=["Métrica","Valor"])
+    resumen_conteos.to_excel(writer, index=False, sheet_name="Resumen_Conteos")
     for name, df_out in super_outputs.items():
         try: df_out.to_excel(writer, index=False, sheet_name=name[:31])
         except Exception: df_out.to_excel(writer, index=False, sheet_name=name.replace("_","")[:31])
-
-    # Volumen 999
     if not volumen_df.empty:
         volumen_df.to_excel(writer, index=False, sheet_name="Volumen_999")
-
-    # Necesidades
     if not wh_unid.empty:
         wh_unid.to_excel(writer, index=False, sheet_name="Necesidades_UNIDAD")
     if not wh_m2.empty:
         wh_m2.to_excel(writer, index=False, sheet_name="Necesidades_M2")
-
-    # Excluidos
     if not df_excluidos.empty:
         excl_info = df_excluidos["_Estado_Articulo"].value_counts().rename_axis("Estado").reset_index(name="Filas_Excluidas")
         excl_info.to_excel(writer, index=False, sheet_name="Excluidos_Info")
@@ -600,5 +522,4 @@ st.download_button("⬇️ Descargar Excel (Resultados_ABC.xlsx)",
                    file_name="Resultados_ABC.xlsx",
                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
-st.success("¡Listo! ABC/XYZ por familia propagado a cada SKU (con SuperABC_Familia), además de ABC por SKU, Súper ABC opcional y Necesidades.")
-
+st.success("¡Listo! ABC/Súper ABC y Necesidades automáticas por UNIDAD/m2 con cobertura por LT (días o meses).")
