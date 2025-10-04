@@ -329,7 +329,107 @@ else:
             tooltip=["Clase:N", "SKUs:Q"]
         ), use_container_width=True
     )
+# =========================
+# Ventas vs Demanda (mensual)  —  NUEVO
+# =========================
+st.subheader("Ventas vs Demanda (mensual)")
 
+# 1) Elegimos columnas de meses (si no eliges, autodetecto)
+all_cols = list(df.columns)
+auto_months = detect_month_cols(all_cols)
+season_months = st.multiselect(
+    "Columnas de meses (unidades) para el gráfico",
+    options=all_cols,
+    default=[c for c in auto_months][-12:]  # últimos 12 detectados
+)
+
+# 2) Opciones de filtro (opcionales)
+col1, col2 = st.columns(2)
+only_skus_A = col1.checkbox("Solo SKUs clase A", value=False)
+only_fams_n2 = col2.checkbox("Solo Familias de Nivel 2", value=False)
+
+if not season_months:
+    st.warning("Selecciona al menos una columna de meses (unidades).")
+else:
+    # Base según filtros elegidos (operamos sobre df original ya filtrado de D/DXF/P.P)
+    df_plot = df.copy()
+
+    # Solo familias N2 (si aplica)
+    if only_fams_n2:
+        if 'fams_sel_keys' in locals() and fams_sel_keys:
+            # fam_key_source es el campo original de familia; normalizamos para cruzar con la llave
+            df_plot["_FK"] = normalize_text(df_plot[fam_key_source].astype(str))
+            df_plot = df_plot[df_plot["_FK"].isin(fams_sel_keys)]
+        else:
+            st.info("No hay familias en Nivel 2 para filtrar; se mostrará todo.")
+
+    # Solo SKUs A (si aplica)
+    if only_skus_A and 'abc_sku_todos' in locals() and not abc_sku_todos.empty:
+        skus_A = set(abc_sku_todos.loc[abc_sku_todos["Clase_ABC_SKU"]=="A", "SKU"].astype(str))
+        df_plot = df_plot[df_plot[col_sku].astype(str).isin(skus_A)]
+        if df_plot.empty:
+            st.warning("No hay datos para SKUs A con los filtros actuales.")
+
+    # 3) Calculamos Demanda (unidades) y Ventas (valor) por mes
+    #    - Unidades: sum(df[mes])
+    #    - Ventas: sum(df[mes] * precio_unitario)
+    #      (aprox. usando la columna de precio unitaria elegida en el formulario)
+    if col_price not in df_plot.columns:
+        st.error("No encuentro la columna de **Precio/Monto unitario** en la data filtrada.")
+    else:
+        precio_unit = to_num(df_plot[col_price])  # vector por fila
+        filas = []
+        for m in season_months:
+            if m not in df_plot.columns:
+                continue
+            unidades_m = to_num(df_plot[m]).sum()
+            ventas_m = (to_num(df_plot[m]) * precio_unit).sum()
+            # número de mes para ordenar (si el nombre contiene ENE..DIC, etc.)
+            up = str(m).strip().upper()
+            mes_num = None
+            for k, v in _MONTH_MAP.items():
+                if k in up:
+                    mes_num = v
+                    break
+            filas.append({"Mes": str(m), "MesNum": mes_num if mes_num is not None else 999,
+                          "Demanda": float(unidades_m), "Ventas": float(ventas_m)})
+
+        if not filas:
+            st.warning("No se pudo construir la serie mensual. Revisa los nombres de columnas seleccionadas.")
+        else:
+            season_df = pd.DataFrame(filas).sort_values(["MesNum", "Mes"]).reset_index(drop=True)
+
+            # 4) Gráfico combinado (barras = Ventas, línea = Demanda) con doble eje
+            base_ch = alt.Chart(season_df).encode(
+                x=alt.X("Mes:N", title="Mes")
+            )
+
+            bars = base_ch.mark_bar().encode(
+                y=alt.Y("Ventas:Q",
+                        axis=alt.Axis(title="Ventas (valor)"),
+                        scale=alt.Scale(domainMin=0)),
+                tooltip=[alt.Tooltip("Mes:N"),
+                         alt.Tooltip("Ventas:Q", format=",.0f"),
+                         alt.Tooltip("Demanda:Q", format=",.0f")]
+            )
+
+            line = base_ch.mark_line(point=True).encode(
+                y=alt.Y("Demanda:Q",
+                        axis=alt.Axis(title="Unidades"),
+                        scale=alt.Scale(domainMin=0)),
+                tooltip=[alt.Tooltip("Mes:N"),
+                         alt.Tooltip("Demanda:Q", format=",.0f"),
+                         alt.Tooltip("Ventas:Q", format=",.0f")]
+            )
+
+            chart = alt.layer(bars, line).resolve_scale(y='independent')
+            st.altair_chart(chart, use_container_width=True)
+
+            with st.expander("Ver tabla (Ventas vs Demanda)"):
+                st.dataframe(season_df[["Mes","Ventas","Demanda"]], use_container_width=True)
+
+            # Guardamos para Excel
+            ventas_vs_demanda_df = season_df[["Mes","Ventas","Demanda"]].copy()
 # ABC SKU todos (para Excel)
 abc_sku_todos = abc_within_group(base, "Familia_Key", col_sku, "Ingresos_Row", a_cut, b_cut)\
                     .merge(fam_meta, on="Familia_Key", how="left").rename(columns={col_sku:"SKU"})
@@ -382,112 +482,6 @@ if enable_super and month_cols:
     else:
         super_outputs.update({"XYZ_Familia": xyz_fam, "SuperABC_Familia": super_fam,
                               "Resumen_SuperABC_Familia": fam_super_res})
-
-# ================ Necesidades de almacén =================
-volumen_df = pd.DataFrame()
-wh_unid = pd.DataFrame(); wh_m2 = pd.DataFrame()
-if enable_wh:
-    if not wh_type_col:
-        st.error("Selecciona la **columna de Tipo de unidad** (UNIDAD/m2).")
-    else:
-        # SKUs A (todas las familias)
-        sku_a = abc_sku_todos[abc_sku_todos["Clase_ABC_SKU"]=="A"][["Familia_Key","SKU","Clase_ABC_SKU"]].copy()
-        if sku_a.empty:
-            st.warning("No hay SKUs A para calcular necesidades.")
-        else:
-            # Demanda mensual
-            months = [c for c in (wh_month_cols or detect_month_cols(df.columns)) if c in df.columns]
-            if months:
-                tmp = df[[col_sku] + months].copy()
-                for c in months: tmp[c] = to_num(tmp[c])
-                dem = tmp.groupby(col_sku, as_index=False)[months].sum()
-                dem["Demanda_Mensual"] = dem[months].mean(axis=1)
-            else:
-                st.info("No se detectaron columnas de meses → usando **unidades totales** como aproximación (1 mes).")
-                dem = base.groupby(col_sku, as_index=False).agg(Demanda_Mensual=("Unid_Row","sum"))
-
-            # Info: tipo + volumen
-            info_cols = [col_sku, wh_type_col]
-            if wh_vol_col and wh_vol_col!="<ninguna>": info_cols.append(wh_vol_col)
-            info = df[info_cols].drop_duplicates()
-            if wh_vol_col and wh_vol_col!="<ninguna>":
-                info[wh_vol_col] = to_num(info[wh_vol_col])
-
-            # Merge base
-            wh = sku_a.merge(dem[[col_sku,"Demanda_Mensual"]], left_on="SKU", right_on=col_sku, how="left")\
-                      .merge(info, left_on="SKU", right_on=col_sku, how="left")
-
-            # --- Lead time → cobertura (convierte a meses si LT está en días) ---
-            if lt_col:
-                lt_series = df[[col_sku, lt_col]].drop_duplicates()
-                lt_series[lt_col] = to_num(lt_series[lt_col])
-                if lt_unit == "Días":
-                    lt_series["_LT_meses"] = lt_series[lt_col] / float(days_per_month)
-                else:
-                    lt_series["_LT_meses"] = lt_series[lt_col]
-                wh = wh.merge(lt_series[[col_sku, "_LT_meses"]], left_on="SKU", right_on=col_sku, how="left")
-                wh["Cobertura_Meses"] = wh["_LT_meses"].apply(coverage_from_lt)
-            else:
-                wh["Cobertura_Meses"] = 1.0
-
-            # Normaliza tipo, prepara volumen
-            wh["Tipo_Unidad"] = wh[wh_type_col].apply(normalize_unit_type)
-            if wh_vol_col and wh_vol_col in wh.columns:
-                wh["Volumen_Unit"] = wh[wh_vol_col]
-            else:
-                wh["Volumen_Unit"] = np.nan
-
-            # Necesidad por SKU
-            wh["Demanda_Mensual"] = wh["Demanda_Mensual"].fillna(0)
-            wh["Necesidad_Unidades"] = np.where(
-                wh["Tipo_Unidad"].eq("UNIDAD"),
-                wh["Demanda_Mensual"] * wh["Cobertura_Meses"], 0.0
-            )
-
-            wh["Is_Vol_999"] = np.where(
-                (wh["Tipo_Unidad"].eq("M2")) & (wh["Volumen_Unit"]==999), 1, 0
-            )
-            wh["Necesidad_M2"] = np.where(
-                (wh["Tipo_Unidad"].eq("M2")) & (~wh["Volumen_Unit"].isna()) & (wh["Volumen_Unit"]!=999),
-                wh["Demanda_Mensual"] * wh["Cobertura_Meses"] * wh["Volumen_Unit"],
-                0.0
-            )
-
-            # Separa vistas
-            wh_unid = wh[wh["Tipo_Unidad"].eq("UNIDAD")].copy()
-            wh_m2   = wh[wh["Tipo_Unidad"].eq("M2")].copy()
-
-            # Totales + métricas
-            total_unid = wh_unid["Necesidad_Unidades"].sum()
-            total_m2   = wh_m2["Necesidad_M2"].sum()
-            excl_999   = int(wh_m2["Is_Vol_999"].sum())
-            c1,c2,c3 = st.columns(3)
-            c1.metric("Necesidad total (UNIDADES)", f"{total_unid:,.0f}")
-            c2.metric("Necesidad total (M2)", f"{total_m2:,.2f}")
-            c3.metric("SKUs M2 con Volumen=999 (excluidos)", f"{excl_999:,}")
-            st.caption(
-                f"Cobertura calculada desde LT en **{lt_unit.lower()}**"
-                f"{' (dividido entre ' + str(days_per_month) + ' días/mes)' if lt_unit=='Días' else ''} "
-                "usando tu tabla (interpolación lineal)."
-            )
-
-            # Mostrar tablas (columnas seguras)
-            cols_u = ["Familia_Key","SKU","Demanda_Mensual","Cobertura_Meses","Necesidad_Unidades"]
-            cols_m = ["Familia_Key","SKU","Demanda_Mensual","Cobertura_Meses","Volumen_Unit","Necesidad_M2","Is_Vol_999"]
-            st.subheader("Necesidades por SKU — **UNIDAD**")
-            st.dataframe(
-                wh_unid.reindex(columns=[c for c in cols_u if c in wh_unid.columns]).merge(fam_meta, on="Familia_Key", how="left"),
-                use_container_width=True
-            )
-            st.subheader("Necesidades por SKU — **m2**")
-            st.dataframe(
-                wh_m2.reindex(columns=[c for c in cols_m if c in wh_m2.columns]).merge(fam_meta, on="Familia_Key", how="left"),
-                use_container_width=True
-            )
-
-            # Volumen 999 listado
-            volumen_df = wh_m2[wh_m2["Is_Vol_999"].eq(1)][["Familia_Key","SKU","Volumen_Unit"]].merge(fam_meta, on="Familia_Key", how="left")
-
 # ================ Excel salida ================
 st.divider(); st.subheader("Descargar resultados (Excel)")
 buffer = BytesIO()
@@ -516,6 +510,9 @@ with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
         excl_info = df_excluidos["_Estado_Articulo"].value_counts().rename_axis("Estado").reset_index(name="Filas_Excluidas")
         excl_info.to_excel(writer, index=False, sheet_name="Excluidos_Info")
         df_excluidos.to_excel(writer, index=False, sheet_name="Registros_Excluidos")
+    # Ventas vs Demanda (si se construyó)
+    if "ventas_vs_demanda_df" in locals() and isinstance(ventas_vs_demanda_df, pd.DataFrame):
+        ventas_vs_demanda_df.to_excel(writer, index=False, sheet_name="Ventas_vs_Demanda")
 
 st.download_button("⬇️ Descargar Excel (Resultados_ABC.xlsx)",
                    data=buffer.getvalue(),
@@ -523,3 +520,4 @@ st.download_button("⬇️ Descargar Excel (Resultados_ABC.xlsx)",
                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 st.success("¡Listo! ABC/Súper ABC y Necesidades automáticas por UNIDAD/m2 con cobertura por LT (días o meses).")
+
