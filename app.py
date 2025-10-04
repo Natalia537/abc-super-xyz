@@ -478,42 +478,73 @@ if enable_super and month_cols:
         super_outputs.update({"XYZ_Familia": xyz_fam, "SuperABC_Familia": super_fam,
                               "Resumen_SuperABC_Familia": fam_super_res})
 # ================ Excel salida ================
-st.divider(); st.subheader("Descargar resultados (Excel)")
+st.divider()
+st.subheader("Descargar resultados (Excel)")
+
 buffer = BytesIO()
-# Ventas vs Demanda (si se construyó)
 with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+    # Nivel 1
     abc_fam[cols_lvl1].to_excel(writer, index=False, sheet_name="ABC_Familia")
-    (res_fam.reset_index().rename(columns={"index":"Clase_ABC","% Ingresos":"Pct_Ventas"})).to_excel(writer, index=False, sheet_name="Resumen_Familia")
+    (res_fam.reset_index()
+           .rename(columns={"index": "Clase_ABC", "% Ingresos": "Pct_Ventas"})
+     ).to_excel(writer, index=False, sheet_name="Resumen_Familia")
+
+    # Nivel 2
     if not sub_base.empty and not abc_sku_n2.empty:
         abc_sku_n2.to_excel(writer, index=False, sheet_name="ABC_SKU_N2")
     abc_sku_todos.to_excel(writer, index=False, sheet_name="ABC_SKU_Todos")
-    resumen_conteos = pd.DataFrame([
-        ["SKUs post-filtro", skus_total_filtrados],
-        [f"SKUs en familias {','.join(clases_n2)} (Nivel 2)", skus_n2],
-        ["Familias post-filtro", familias_total_filtradas],
-    ], columns=["Métrica","Valor"])
+
+    # Resumen de conteos
+    resumen_conteos = pd.DataFrame(
+        [
+            ["SKUs post-filtro", skus_total_filtrados],
+            [f"SKUs en familias {','.join(clases_n2)} (Nivel 2)", skus_n2],
+            ["Familias post-filtro", familias_total_filtradas],
+        ],
+        columns=["Métrica", "Valor"],
+    )
     resumen_conteos.to_excel(writer, index=False, sheet_name="Resumen_Conteos")
+
+    # Súper ABC (si existe)
     for name, df_out in super_outputs.items():
-        try: df_out.to_excel(writer, index=False, sheet_name=name[:31])
-        except Exception: df_out.to_excel(writer, index=False, sheet_name=name.replace("_","")[:31])
+        try:
+            df_out.to_excel(writer, index=False, sheet_name=name[:31])
+        except Exception:
+            df_out.to_excel(writer, index=False, sheet_name=name.replace("_", "")[:31])
+
+    # Volumen 999 y necesidades
     if not volumen_df.empty:
         volumen_df.to_excel(writer, index=False, sheet_name="Volumen_999")
     if not wh_unid.empty:
         wh_unid.to_excel(writer, index=False, sheet_name="Necesidades_UNIDAD")
     if not wh_m2.empty:
         wh_m2.to_excel(writer, index=False, sheet_name="Necesidades_M2")
+
+    # Excluidos
     if not df_excluidos.empty:
-        excl_info = df_excluidos["_Estado_Articulo"].value_counts().rename_axis("Estado").reset_index(name="Filas_Excluidas")
+        excl_info = (
+            df_excluidos["_Estado_Articulo"]
+            .value_counts()
+            .rename_axis("Estado")
+            .reset_index(name="Filas_Excluidas")
+        )
         excl_info.to_excel(writer, index=False, sheet_name="Excluidos_Info")
         df_excluidos.to_excel(writer, index=False, sheet_name="Registros_Excluidos")
-if "ventas_vs_demanda_df" in locals() and isinstance(ventas_vs_demanda_df, pd.DataFrame):
+
+    # ✅ Ventas vs Demanda (escribir DENTRO del with)
+    if "ventas_vs_demanda_df" in locals() and isinstance(ventas_vs_demanda_df, pd.DataFrame):
         ventas_vs_demanda_df.to_excel(writer, index=False, sheet_name="Ventas_vs_Demanda")
-st.download_button("⬇️ Descargar Excel (Resultados_ABC.xlsx)",
-                   data=buffer.getvalue(),
-                   file_name="Resultados_ABC.xlsx",
-                   mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+# Opcional pero limpio
+buffer.seek(0)
+
+st.download_button(
+    "⬇️ Descargar Excel (Resultados_ABC.xlsx)",
+    data=buffer.getvalue(),
+    file_name="Resultados_ABC.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+)
 
 st.success("¡Listo! ABC/Súper ABC y Necesidades automáticas por UNIDAD/m2 con cobertura por LT (días o meses).")
-
 
 
