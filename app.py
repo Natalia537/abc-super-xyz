@@ -145,13 +145,13 @@ st.subheader("Vista previa de datos"); st.dataframe(df.head(), use_container_wid
 # ================ Parámetros ================
 with st.form("params"):
     cols = list(df.columns)
-    col_sku      = st.selectbox("Columna **Código / SKU**", cols)
-    col_fam_name = st.selectbox("Columna **Nombre de Familia** (recomendado)", ["<ninguna>"]+cols, index=0)
-    col_fam_code = st.selectbox("Columna **Código de Familia** (opcional)", ["<ninguna>"]+cols, index=0)
-    col_unid     = st.selectbox("Columna **Unidades vendidas (detalle)**", cols)
-    col_price    = st.selectbox("Columna **Precio/Monto unitario**", cols)
+    col_sku      = st.selectbox("Columna **Código / SKU (C.Producto)**", cols)
+    col_fam_name = st.selectbox("Columna **Nombre de Familia (D.Famili)** (recomendado)", ["<ninguna>"]+cols, index=0)
+    col_fam_code = st.selectbox("Columna **Código de Familia** (opcional)(C.Familia)", ["<ninguna>"]+cols, index=0)
+    col_unid     = st.selectbox("Columna **Unidades vendidas (Vendido)**", cols)
+    col_price    = st.selectbox("Columna **Precio/Monto unitario (precio 4)**", cols)
 
-    st.markdown("**Filtro por estado en descripción (opcional)**")
+    st.markdown("**Filtro por estado en descripción (opcional) Acá selecciona D.Producto**")
     col_desc = st.selectbox("Columna con (D)/(DXF)/(P.P) al final (ej. D.Articulo)", ["<ninguna>"]+cols, index=0)
     exclude_status = st.multiselect("Excluir estos estados", options=["D","DXF","P.P"])
 
@@ -439,3 +439,4 @@ st.download_button(
 )
 
 st.success("¡Listo! ABC/Súper ABC y gráfico Ventas vs Demanda (sin módulo de almacén).")
+
