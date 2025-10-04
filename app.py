@@ -481,8 +481,6 @@ if enable_super and month_cols:
 st.divider(); st.subheader("Descargar resultados (Excel)")
 buffer = BytesIO()
 # Ventas vs Demanda (si se construyó)
-    if "ventas_vs_demanda_df" in locals() and isinstance(ventas_vs_demanda_df, pd.DataFrame):
-        ventas_vs_demanda_df.to_excel(writer, index=False, sheet_name="Ventas_vs_Demanda")
 with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
     abc_fam[cols_lvl1].to_excel(writer, index=False, sheet_name="ABC_Familia")
     (res_fam.reset_index().rename(columns={"index":"Clase_ABC","% Ingresos":"Pct_Ventas"})).to_excel(writer, index=False, sheet_name="Resumen_Familia")
@@ -508,12 +506,14 @@ with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
         excl_info = df_excluidos["_Estado_Articulo"].value_counts().rename_axis("Estado").reset_index(name="Filas_Excluidas")
         excl_info.to_excel(writer, index=False, sheet_name="Excluidos_Info")
         df_excluidos.to_excel(writer, index=False, sheet_name="Registros_Excluidos")
-
+if "ventas_vs_demanda_df" in locals() and isinstance(ventas_vs_demanda_df, pd.DataFrame):
+        ventas_vs_demanda_df.to_excel(writer, index=False, sheet_name="Ventas_vs_Demanda")
 st.download_button("⬇️ Descargar Excel (Resultados_ABC.xlsx)",
                    data=buffer.getvalue(),
                    file_name="Resultados_ABC.xlsx",
                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 st.success("¡Listo! ABC/Súper ABC y Necesidades automáticas por UNIDAD/m2 con cobertura por LT (días o meses).")
+
 
 
