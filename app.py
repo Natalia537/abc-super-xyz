@@ -330,83 +330,82 @@ else:
         ), use_container_width=True
     )
 # =========================
-# Ventas vs Demanda (mensual)  —  NUEVO
+# Ventas vs Demanda (mensual) — usa los meses de Súper ABC
 # =========================
 st.subheader("Ventas vs Demanda (mensual)")
 
-# 1) Elegimos columnas de meses (si no eliges, autodetecto)
-all_cols = list(df.columns)
-auto_months = detect_month_cols(all_cols)
-season_months = st.multiselect(
-    "Columnas de meses (unidades) para el gráfico",
-    options=all_cols,
-    default=[c for c in auto_months][-12:]  # últimos 12 detectados
-)
-
-# 2) Opciones de filtro (opcionales)
-col1, col2 = st.columns(2)
-only_skus_A = col1.checkbox("Solo SKUs clase A", value=False)
-only_fams_n2 = col2.checkbox("Solo Familias de Nivel 2", value=False)
-
-if not season_months:
-    st.warning("Selecciona al menos una columna de meses (unidades).")
+# 1) Tomar los mismos meses que Súper ABC (XYZ)
+if enable_super and month_cols:
+    months_for_chart = [c for c in month_cols if c in df.columns]
+    st.caption("Usando las mismas columnas de meses seleccionadas en **Súper ABC**.")
 else:
-    # Base según filtros elegidos (operamos sobre df original ya filtrado de D/DXF/P.P)
+    # Autodetectar (ENE…DIC en ES/EN) y tomar los últimos 12
+    auto_months = detect_month_cols(df.columns)
+    months_for_chart = [c for c in auto_months if c in df.columns][-12:]
+    st.caption("No seleccionaste meses en Súper ABC; se **autodetectan** por nombre (ENE…DIC).")
+
+# 2) Filtros opcionales
+col1, col2 = st.columns(2)
+only_skus_A  = col1.checkbox("Solo SKUs clase A", value=False, key="vvd_onlyA")
+only_fams_n2 = col2.checkbox("Solo Familias de Nivel 2", value=False, key="vvd_onlyN2")
+
+if not months_for_chart:
+    st.warning("No hay columnas de meses disponibles para construir la serie.")
+else:
+    # 3) Base según filtros (df ya viene filtrado por D/DXF/P.P si aplicó)
     df_plot = df.copy()
 
-    # Solo familias N2 (si aplica)
+    # Solo familias de Nivel 2
     if only_fams_n2:
         if 'fams_sel_keys' in locals() and fams_sel_keys:
-            # fam_key_source es el campo original de familia; normalizamos para cruzar con la llave
             df_plot["_FK"] = normalize_text(df_plot[fam_key_source].astype(str))
             df_plot = df_plot[df_plot["_FK"].isin(fams_sel_keys)]
         else:
             st.info("No hay familias en Nivel 2 para filtrar; se mostrará todo.")
 
-    # Solo SKUs A (si aplica)
+    # Solo SKUs A
     if only_skus_A and 'abc_sku_todos' in locals() and not abc_sku_todos.empty:
         skus_A = set(abc_sku_todos.loc[abc_sku_todos["Clase_ABC_SKU"]=="A", "SKU"].astype(str))
         df_plot = df_plot[df_plot[col_sku].astype(str).isin(skus_A)]
         if df_plot.empty:
             st.warning("No hay datos para SKUs A con los filtros actuales.")
 
-    # 3) Calculamos Demanda (unidades) y Ventas (valor) por mes
-    #    - Unidades: sum(df[mes])
-    #    - Ventas: sum(df[mes] * precio_unitario)
-    #      (aprox. usando la columna de precio unitaria elegida en el formulario)
+    # 4) Calcular Demanda (unid) y Ventas (valor) por mes
     if col_price not in df_plot.columns:
         st.error("No encuentro la columna de **Precio/Monto unitario** en la data filtrada.")
     else:
-        precio_unit = to_num(df_plot[col_price])  # vector por fila
+        precio_unit = to_num(df_plot[col_price])
         filas = []
-        for m in season_months:
+        for m in months_for_chart:
             if m not in df_plot.columns:
                 continue
-            unidades_m = to_num(df_plot[m]).sum()
+            unid_m = to_num(df_plot[m]).sum()
             ventas_m = (to_num(df_plot[m]) * precio_unit).sum()
-            # número de mes para ordenar (si el nombre contiene ENE..DIC, etc.)
+
+            # Para ordenar por mes si el nombre contiene ENE…DIC
             up = str(m).strip().upper()
             mes_num = None
             for k, v in _MONTH_MAP.items():
                 if k in up:
-                    mes_num = v
-                    break
-            filas.append({"Mes": str(m), "MesNum": mes_num if mes_num is not None else 999,
-                          "Demanda": float(unidades_m), "Ventas": float(ventas_m)})
+                    mes_num = v; break
+
+            filas.append({
+                "Mes": str(m),
+                "MesNum": mes_num if mes_num is not None else 999,
+                "Demanda": float(unid_m),
+                "Ventas": float(ventas_m)
+            })
 
         if not filas:
-            st.warning("No se pudo construir la serie mensual. Revisa los nombres de columnas seleccionadas.")
+            st.warning("No se pudo construir la serie mensual. Revisa los nombres de columnas.")
         else:
             season_df = pd.DataFrame(filas).sort_values(["MesNum", "Mes"]).reset_index(drop=True)
 
-            # 4) Gráfico combinado (barras = Ventas, línea = Demanda) con doble eje
-            base_ch = alt.Chart(season_df).encode(
-                x=alt.X("Mes:N", title="Mes")
-            )
+            # 5) Gráfico: barras = Ventas (valor), línea = Demanda (unidades)
+            base_ch = alt.Chart(season_df).encode(x=alt.X("Mes:N", title="Mes"))
 
             bars = base_ch.mark_bar().encode(
-                y=alt.Y("Ventas:Q",
-                        axis=alt.Axis(title="Ventas (valor)"),
+                y=alt.Y("Ventas:Q", axis=alt.Axis(title="Ventas (valor)"),
                         scale=alt.Scale(domainMin=0)),
                 tooltip=[alt.Tooltip("Mes:N"),
                          alt.Tooltip("Ventas:Q", format=",.0f"),
@@ -414,8 +413,7 @@ else:
             )
 
             line = base_ch.mark_line(point=True).encode(
-                y=alt.Y("Demanda:Q",
-                        axis=alt.Axis(title="Unidades"),
+                y=alt.Y("Demanda:Q", axis=alt.Axis(title="Unidades"),
                         scale=alt.Scale(domainMin=0)),
                 tooltip=[alt.Tooltip("Mes:N"),
                          alt.Tooltip("Demanda:Q", format=",.0f"),
@@ -428,11 +426,8 @@ else:
             with st.expander("Ver tabla (Ventas vs Demanda)"):
                 st.dataframe(season_df[["Mes","Ventas","Demanda"]], use_container_width=True)
 
-            # Guardamos para Excel
+            # Guardar para Excel
             ventas_vs_demanda_df = season_df[["Mes","Ventas","Demanda"]].copy()
-# ABC SKU todos (para Excel)
-abc_sku_todos = abc_within_group(base, "Familia_Key", col_sku, "Ingresos_Row", a_cut, b_cut)\
-                    .merge(fam_meta, on="Familia_Key", how="left").rename(columns={col_sku:"SKU"})
 
 # ================ Súper ABC (opcional) ================
 super_outputs={}
@@ -485,6 +480,9 @@ if enable_super and month_cols:
 # ================ Excel salida ================
 st.divider(); st.subheader("Descargar resultados (Excel)")
 buffer = BytesIO()
+# Ventas vs Demanda (si se construyó)
+    if "ventas_vs_demanda_df" in locals() and isinstance(ventas_vs_demanda_df, pd.DataFrame):
+        ventas_vs_demanda_df.to_excel(writer, index=False, sheet_name="Ventas_vs_Demanda")
 with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
     abc_fam[cols_lvl1].to_excel(writer, index=False, sheet_name="ABC_Familia")
     (res_fam.reset_index().rename(columns={"index":"Clase_ABC","% Ingresos":"Pct_Ventas"})).to_excel(writer, index=False, sheet_name="Resumen_Familia")
@@ -510,9 +508,6 @@ with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
         excl_info = df_excluidos["_Estado_Articulo"].value_counts().rename_axis("Estado").reset_index(name="Filas_Excluidas")
         excl_info.to_excel(writer, index=False, sheet_name="Excluidos_Info")
         df_excluidos.to_excel(writer, index=False, sheet_name="Registros_Excluidos")
-    # Ventas vs Demanda (si se construyó)
-    if "ventas_vs_demanda_df" in locals() and isinstance(ventas_vs_demanda_df, pd.DataFrame):
-        ventas_vs_demanda_df.to_excel(writer, index=False, sheet_name="Ventas_vs_Demanda")
 
 st.download_button("⬇️ Descargar Excel (Resultados_ABC.xlsx)",
                    data=buffer.getvalue(),
@@ -520,4 +515,5 @@ st.download_button("⬇️ Descargar Excel (Resultados_ABC.xlsx)",
                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 st.success("¡Listo! ABC/Súper ABC y Necesidades automáticas por UNIDAD/m2 con cobertura por LT (días o meses).")
+
 
