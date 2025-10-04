@@ -7,7 +7,7 @@ import unicodedata, re
 import altair as alt
 
 # ================= Config =================
-st.set_page_config(page_title="ABC / Súper ABC / Necesidades", layout="wide")
+st.set_page_config(page_title="ABC / Súper ABC", layout="wide")
 st.title("ABC / Súper ABC (ABC×XYZ) por Familias y SKUs")
 
 with st.expander("ℹ️ Guía rápida"):
@@ -204,34 +204,7 @@ with st.form("params"):
         cv_x = st.number_input("Umbral X (CV ≤ X)", 0.0, 1.0, 0.25, 0.01)
         cv_y = st.number_input("Umbral Y (CV ≤ Y)", cv_x, 1.0, 0.50, 0.01)
 
-    st.markdown("---")
-    st.markdown("**Necesidades de almacén (opcional, solo SKUs A)**")
-    enable_wh = st.checkbox("Calcular **Necesidades de almacén** automáticas (UNIDAD / m2)")
-    wh_type_col = wh_vol_col = lt_col = None
-    wh_month_cols = []; lt_unit = "Días"; days_per_month = 30
-    if enable_wh:
-        wh_type_col = st.selectbox("Columna **Tipo de unidad** (valores: UNIDAD / m2)", cols)
-
-        # Lead Time (columna + unidad)
-        lt_candidates = [c for c in cols if "LT" in str(c).upper() or "LEAD" in str(c).upper()]
-        lt_default_index = cols.index(lt_candidates[0]) if lt_candidates else 0
-        lt_col = st.selectbox("Columna **Lead Time**", cols, index=lt_default_index)
-
-        lt_unit = st.radio("Unidad de Lead Time", ["Meses", "Días"], index=1, horizontal=True)
-        if lt_unit == "Días":
-            days_per_month = st.number_input("Días por mes (para convertir LT a meses)", 1, 31, 30, 1)
-
-        # Volumen (para m2)
-        vol_candidates = [c for c in cols if "VOLUMEN" in str(c).upper()]
-        v_idx = cols.index(vol_candidates[0]) if vol_candidates else 0
-        wh_vol_col  = st.selectbox("Columna **Volumen** (m² por unidad, 999 = sin dimensión)",
-                                   ["<ninguna>"]+cols, index=(v_idx+1 if v_idx or vol_candidates else 0))
-
-        st.caption("Si no eliges meses, se **autodetectan** por nombre (ENE…DIC) y se usa el **promedio mensual**.")
-        m_auto = detect_month_cols(cols)
-        wh_month_cols = st.multiselect("Meses para demanda promedio (opcional)", cols, default=[c for c in m_auto][-12:])
-
-    submitted = st.form_submit_button("Calcular")
+    
 if not submitted: st.stop()
 
 # ================ Filtro estados ================
@@ -512,14 +485,6 @@ with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
         except Exception:
             df_out.to_excel(writer, index=False, sheet_name=name.replace("_", "")[:31])
 
-    # Volumen 999 y necesidades
-    if not volumen_df.empty:
-        volumen_df.to_excel(writer, index=False, sheet_name="Volumen_999")
-    if not wh_unid.empty:
-        wh_unid.to_excel(writer, index=False, sheet_name="Necesidades_UNIDAD")
-    if not wh_m2.empty:
-        wh_m2.to_excel(writer, index=False, sheet_name="Necesidades_M2")
-
     # Excluidos
     if not df_excluidos.empty:
         excl_info = (
@@ -545,6 +510,7 @@ st.download_button(
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 )
 
-st.success("¡Listo! ABC/Súper ABC y Necesidades automáticas por UNIDAD/m2 con cobertura por LT (días o meses).")
+st.success("¡Listo! ABC/Súper ABC XYZ")
+
 
 
