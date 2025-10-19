@@ -10,15 +10,6 @@ import altair as alt
 st.set_page_config(page_title="ABC / Súper ABC", layout="wide")
 st.title("ABC / Súper ABC (ABC×XYZ) por Familias y SKUs")
 
-with st.expander("ℹ️ Guía rápida"):
-    st.markdown("""
-**ABC (Pareto por ventas)** → A/B/C según % acumulado de ventas.  
-**XYZ (variabilidad)** → CV (σ/μ) con columnas de **meses (unidades)** → X/Y/Z.  
-**Súper ABC** = combinación (p.ej. AX = A en ventas + X estable).  
-Los gráficos empiezan en **0** y tienen *tooltips*.  
-**Stock** se muestra en **naranja** y se puede escalar ÷ 1000 (solo en gráficos).
-""")
-
 # ================ Utilidades ================
 def safe_block(label, fn, *args, **kwargs):
     try:
@@ -518,3 +509,4 @@ st.download_button(
 )
 
 st.success("¡Listo! ABC/Súper ABC y gráfico Ventas vs Demanda, **con STOCK** en Familias/SKUs y XYZ (barras naranjas).")
+
