@@ -1,4 +1,4 @@
-# app.py  (con STOCK integrado y gráficos con barras agrupadas)
+# app.py  (con STOCK integrado y coherencia de unidades en gráficos)
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -9,6 +9,15 @@ import altair as alt
 # ================= Config =================
 st.set_page_config(page_title="ABC / Súper ABC", layout="wide")
 st.title("ABC / Súper ABC (ABC×XYZ) por Familias y SKUs")
+
+with st.expander("ℹ️ Guía rápida"):
+    st.markdown("""
+**ABC (Pareto por ventas)** → A/B/C según % acumulado de ventas.  
+**XYZ (variabilidad)** → CV (σ/μ) con columnas de **meses (unidades)** → X/Y/Z.  
+**Súper ABC** = combinación (p.ej. AX = A en ventas + X estable).  
+Los gráficos empiezan en **0** y tienen *tooltips*.  
+**Regla de coherencia:** si el gráfico está en **%**, el stock se muestra en **%**; si está en **cantidades**, el stock va en **cantidades**.
+""")
 
 # ================ Utilidades ================
 def safe_block(label, fn, *args, **kwargs):
@@ -168,9 +177,6 @@ with st.form("params"):
         cv_x = st.number_input("Umbral X (CV ≤ X)", 0.0, 1.0, 0.25, 0.01)
         cv_y = st.number_input("Umbral Y (CV ≤ Y)", cv_x, 1.0, 0.50, 0.01)
 
-    st.markdown("**Gráficos — Escala de Stock**")
-    scale_stock_thousands = st.checkbox("Mostrar Stock ÷ 1000 (solo en gráficos)", value=True)
-
     submitted = st.form_submit_button("Calcular")
 if not submitted: st.stop()
 
@@ -200,7 +206,6 @@ base["Familia_Key"] = normalize_text(base[fam_key_source])
 base["Unid_Row"]   = to_num(base[col_unid])
 base["Precio_Row"] = to_num(base[col_price])
 base["Ingresos_Row"] = base["Unid_Row"] * base["Precio_Row"]
-# --- STOCK por fila (0 si no se seleccionó) ---
 base["Stock_Row"] = to_num(base[col_stock]) if col_stock!="<ninguna>" else 0
 
 skus_total_filtrados = base[col_sku].nunique()
@@ -236,24 +241,29 @@ cols_lvl1 = ["Familia_Key","Familia_Cod","Familia_Nombre","Unid_Total","Ingresos
 st.subheader("Nivel 1: ABC por **Familias** (ventas)")
 st.dataframe(abc_fam[cols_lvl1], use_container_width=True)
 
-# --- Resumen por clase (Familias) con barras agrupadas: %Ventas vs Stock ---
+# --- Resumen por clase (Familias) en %: %Ventas vs %Stock ---
 res_fam = (abc_fam.groupby("Clase_ABC", as_index=False)
            .agg(Ingresos=("Ingresos_Total","sum"),
                 Stock=("Stock_Total","sum")))
-res_fam["Pct_Ventas"] = (res_fam["Ingresos"]/res_fam["Ingresos"].sum())*100
+# Porcentajes coherentes
+res_fam["Pct_Ventas"] = (res_fam["Ingresos"] / res_fam["Ingresos"].sum()) * 100
+res_fam["Pct_Stock"]  = (res_fam["Stock"]    / res_fam["Stock"].sum())    * 100
 plot_fam = res_fam.rename(columns={"Clase_ABC":"Clase"}).copy()
-if scale_stock_thousands: plot_fam["Stock"] = plot_fam["Stock"] / 1000.0
-plot_fam_long = plot_fam.melt(id_vars=["Clase"], value_vars=["Pct_Ventas","Stock"], var_name="Métrica", value_name="Valor")
+
+plot_fam_long = plot_fam.melt(id_vars=["Clase"],
+                              value_vars=["Pct_Ventas","Pct_Stock"],
+                              var_name="Métrica", value_name="Valor")
+
 st.altair_chart(
     alt.Chart(plot_fam_long).mark_bar().encode(
         x=alt.X("Clase:N", sort=["A","B","C"], title="Clase ABC"),
         xOffset="Métrica:N",
-        y=alt.Y("Valor:Q", title="Valor"),
+        y=alt.Y("Valor:Q", title="%"),
         color=alt.Color("Métrica:N",
-                        scale=alt.Scale(domain=["Pct_Ventas","Stock"], range=["#4C78A8","#FFA500"]),
-                        legend=alt.Legend(title="Métrica")),
-        tooltip=["Clase:N","Métrica:N", alt.Tooltip("Valor:Q", format=",.2f")]
-    ).properties(title="ABC Familias: % Ventas (azul) vs Stock (naranja)"),
+                        scale=alt.Scale(domain=["Pct_Ventas","Pct_Stock"], range=["#4C78A8","#FFA500"]),
+                        legend=alt.Legend(title="Métrica", labelExpr="datum.label == 'Pct_Ventas' ? '% Ventas' : '% Stock'")),
+        tooltip=["Clase:N", alt.Tooltip("Valor:Q", title="Valor", format=".1f"), "Métrica:N"]
+    ).properties(title="ABC Familias: % Ventas (azul) vs % Stock (naranja)"),
     use_container_width=True
 )
 
@@ -274,21 +284,20 @@ else:
         abc_sku_n2[["Familia_Key","Familia_Cod","Familia_Nombre","SKU","Unid_Total","Ingresos_Total","Stock_Total","%Ingresos_Fam","%Acum_Fam","Clase_ABC_SKU"]],
         use_container_width=True
     )
-    # Barras agrupadas: SKUs vs Stock
+    # Barras agrupadas en cantidades: SKUs (conteo) vs Stock (cantidad)
     sku_res = (abc_sku_n2.groupby("Clase_ABC_SKU", as_index=False)
                .agg(SKUs=("SKU","count"),
                     Stock=("Stock_Total","sum"))).rename(columns={"Clase_ABC_SKU":"Clase"})
-    if scale_stock_thousands: sku_res["Stock"] = sku_res["Stock"]/1000.0
     plot_sku_long = sku_res.melt(id_vars=["Clase"], value_vars=["SKUs","Stock"], var_name="Métrica", value_name="Valor")
     st.altair_chart(
         alt.Chart(plot_sku_long).mark_bar().encode(
             x=alt.X("Clase:N", sort=["A","B","C"], title="Clase ABC"),
             xOffset="Métrica:N",
-            y=alt.Y("Valor:Q", title="Valor"),
+            y=alt.Y("Valor:Q", title="Cantidad"),
             color=alt.Color("Métrica:N",
                             scale=alt.Scale(domain=["SKUs","Stock"], range=["#4C78A8","#FFA500"]),
                             legend=alt.Legend(title="Métrica")),
-            tooltip=["Clase:N","Métrica:N", alt.Tooltip("Valor:Q", format=",.2f")]
+            tooltip=["Clase:N","Métrica:N", alt.Tooltip("Valor:Q", format=",.0f")]
         ).properties(title="ABC SKU (N2): SKUs (azul) vs Stock (naranja)"),
         use_container_width=True
     )
@@ -386,22 +395,20 @@ if enable_super and month_cols:
     super_fam.drop(columns=["Stock_Total_XYZ"], inplace=True)
     super_fam["SuperABC"] = super_fam["Clase_ABC"].fillna("C")+super_fam["Clase_XYZ"].fillna("Z")
 
-    # Resumen y gráfico (Familia): Items vs Stock
+    # Resumen y gráfico (Familia) en cantidades: Items vs Stock
     fam_super_res = super_fam.groupby("SuperABC", as_index=False).agg(Items=("SuperABC","count"),
                                                                       Ingresos=("Ingresos_Total","sum"),
                                                                       Stock=("Stock_Total","sum"))
-    plot_sf = fam_super_res.copy()
-    if scale_stock_thousands: plot_sf["Stock"] = plot_sf["Stock"]/1000.0
-    fam_super_long = plot_sf.melt(id_vars=["SuperABC"], value_vars=["Items","Stock"], var_name="Métrica", value_name="Valor")
+    fam_super_long = fam_super_res.melt(id_vars=["SuperABC"], value_vars=["Items","Stock"], var_name="Métrica", value_name="Valor")
     st.altair_chart(
         alt.Chart(fam_super_long).mark_bar().encode(
             x=alt.X("SuperABC:N", title="Categoría"),
             xOffset="Métrica:N",
-            y=alt.Y("Valor:Q", title="Valor"),
+            y=alt.Y("Valor:Q", title="Cantidad"),
             color=alt.Color("Métrica:N",
                             scale=alt.Scale(domain=["Items","Stock"], range=["#4C78A8","#FFA500"]),
                             legend=alt.Legend(title="Métrica")),
-            tooltip=["SuperABC:N","Métrica:N", alt.Tooltip("Valor:Q", format=",.2f")]
+            tooltip=["SuperABC:N","Métrica:N", alt.Tooltip("Valor:Q", format=",.0f")]
         ).properties(title="Súper ABC (Familia): Items (azul) vs Stock (naranja)"),
         use_container_width=True
     )
@@ -419,9 +426,6 @@ if enable_super and month_cols:
         sku_n2_keys = sub_base[["Familia_Key", col_sku]].drop_duplicates().rename(columns={col_sku:"SKU"})
         xyz_sku = xyz_sku.merge(sku_n2_keys, on=["Familia_Key","SKU"], how="inner")
 
-    if not sub_base.empty and not 'abc_sku_n2' in locals():
-        abc_sku_n2 = pd.DataFrame()
-
     if not sub_base.empty and not abc_sku_n2.empty:
         tmp_abc = abc_sku_n2[["Familia_Key","SKU","Clase_ABC_SKU","Ingresos_Total","Stock_Total"]]
         super_sku = (tmp_abc.merge(xyz_sku[["Familia_Key","SKU","CV","Clase_XYZ","Stock_Total"]]
@@ -436,18 +440,16 @@ if enable_super and month_cols:
                          .agg(SKUs=("SuperABC","count"),
                               Ingresos=("Ingresos_Total","sum"),
                               Stock=("Stock_Total","sum")))
-        plot_ss = sku_super_res.copy()
-        if scale_stock_thousands: plot_ss["Stock"] = plot_ss["Stock"]/1000.0
-        sku_super_long = plot_ss.melt(id_vars=["SuperABC"], value_vars=["SKUs","Stock"], var_name="Métrica", value_name="Valor")
+        sku_super_long = sku_super_res.melt(id_vars=["SuperABC"], value_vars=["SKUs","Stock"], var_name="Métrica", value_name="Valor")
         st.altair_chart(
             alt.Chart(sku_super_long).mark_bar().encode(
                 x=alt.X("SuperABC:N", title="Categoría"),
                 xOffset="Métrica:N",
-                y=alt.Y("Valor:Q", title="Valor"),
+                y=alt.Y("Valor:Q", title="Cantidad"),
                 color=alt.Color("Métrica:N",
                                 scale=alt.Scale(domain=["SKUs","Stock"], range=["#4C78A8","#FFA500"]),
                                 legend=alt.Legend(title="Métrica")),
-                tooltip=["SuperABC:N","Métrica:N", alt.Tooltip("Valor:Q", format=",.2f")]
+                tooltip=["SuperABC:N","Métrica:N", alt.Tooltip("Valor:Q", format=",.0f")]
             ).properties(title="Súper ABC (SKU): SKUs (azul) vs Stock (naranja)"),
             use_container_width=True
         )
@@ -468,8 +470,10 @@ buffer = BytesIO()
 with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
     # Nivel 1
     abc_fam[cols_lvl1].to_excel(writer, index=False, sheet_name="ABC_Familia")
-    (res_fam.rename(columns={"Pct_Ventas":"% Ingresos"})
-            [["Clase_ABC","Ingresos","Stock","% Ingresos"]]
+    # Resumen con % Stock coherente
+    (res_fam.assign(**{"% Ingresos": res_fam["Pct_Ventas"],
+                       "% Stock":   res_fam["Pct_Stock"]})
+            [["Clase_ABC","Ingresos","Stock","% Ingresos","% Stock"]]
      ).to_excel(writer, index=False, sheet_name="Resumen_Familia")
 
     # Nivel 2
@@ -508,5 +512,4 @@ st.download_button(
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 )
 
-st.success("¡Listo! ABC/Súper ABC y gráfico Ventas vs Demanda, **con STOCK** en Familias/SKUs y XYZ (barras naranjas).")
-
+st.success("¡Listo! Coherencia aplicada: en gráficos de %, **% Stock**; en gráficos de cantidades, **Stock en cantidades**.")
