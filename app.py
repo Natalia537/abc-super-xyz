@@ -1,4 +1,4 @@
-# app.py  (sin módulo de Necesidades de almacén)
+# app.py  (con STOCK integrado)
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -55,8 +55,11 @@ def abc_from_values(df, value_col, a_cut=80.0, b_cut=95.0):
     return out
 
 def abc_within_group(df, group_col, key_col, value_col, a_cut=80.0, b_cut=95.0):
+    # Nota: requiere que existan columnas 'Unid_Row' y 'Stock_Row' en df
     g = (df.groupby([group_col, key_col], as_index=False)
-           .agg(Unid_Total=("Unid_Row","sum"), Ingresos_Total=(value_col,"sum")))
+           .agg(Unid_Total=("Unid_Row","sum"),
+                Ingresos_Total=(value_col,"sum"),
+                Stock_Total=("Stock_Row","sum")))
     parts=[]
     for fam, sub in g.groupby(group_col, sort=False):
         sub = sub.sort_values(["Ingresos_Total", key_col], ascending=[False, True], kind="mergesort").copy()
@@ -150,6 +153,7 @@ with st.form("params"):
     col_fam_code = st.selectbox("Columna **Código de Familia** (opcional)", ["<ninguna>"]+cols, index=0)
     col_unid     = st.selectbox("Columna **Unidades vendidas (detalle)**", cols)
     col_price    = st.selectbox("Columna **Precio/Monto unitario**", cols)
+    col_stock    = st.selectbox("Columna **Stock** (opcional)", ["<ninguna>"]+cols, index=0)  # <--- NUEVO
 
     st.markdown("**Filtro por estado en descripción (opcional)**")
     col_desc = st.selectbox("Columna con (D)/(DXF)/(P.P) al final (ej. D.Articulo)", ["<ninguna>"]+cols, index=0)
@@ -166,7 +170,7 @@ with st.form("params"):
     enable_super = st.checkbox("Activar Súper ABC (combinar ABC con XYZ)")
     month_cols = []; cv_x=0.25; cv_y=0.50
     if enable_super:
-        candidates = [c for c in cols if c not in {col_sku,col_fam_name,col_fam_code,col_unid,col_price} and c!="<ninguna>"]
+        candidates = [c for c in cols if c not in {col_sku,col_fam_name,col_fam_code,col_unid,col_price,col_stock} and c!="<ninguna>"]
         st.info("Selecciona columnas de **meses** (unidades) para calcular XYZ.")
         month_cols = st.multiselect("Columnas de meses (UNIDADES)", candidates)
         cv_x = st.number_input("Umbral X (CV ≤ X)", 0.0, 1.0, 0.25, 0.01)
@@ -193,7 +197,7 @@ fam_key_source = col_fam_code if use_code else (col_fam_name if col_fam_name!="<
 if fam_key_source is None:
     st.error("Debes seleccionar al menos una columna de **Familia** (Nombre o Código)."); st.stop()
 
-base = df[[col_sku, fam_key_source, col_unid, col_price]].copy()
+base = df[[col_sku, fam_key_source, col_unid, col_price] + ([col_stock] if col_stock!="<ninguna>" else [])].copy()
 base[col_sku] = base[col_sku].astype(str).str.strip()
 base[fam_key_source] = base[fam_key_source].astype(str).str.strip()
 base = base[base[col_sku].ne("") & base[fam_key_source].ne("")]
@@ -201,6 +205,8 @@ base["Familia_Key"] = normalize_text(base[fam_key_source])
 base["Unid_Row"]   = to_num(base[col_unid])
 base["Precio_Row"] = to_num(base[col_price])
 base["Ingresos_Row"] = base["Unid_Row"] * base["Precio_Row"]
+# --- STOCK por fila (0 si no se seleccionó) ---
+base["Stock_Row"] = to_num(base[col_stock]) if col_stock!="<ninguna>" else 0
 
 skus_total_filtrados = base[col_sku].nunique()
 familias_total_filtradas = base["Familia_Key"].nunique()
@@ -227,9 +233,11 @@ else:
 
 # ================ NIVEL 1: ABC Familias ================
 fam_agg = (base.groupby("Familia_Key", as_index=False)
-                .agg(Unid_Total=("Unid_Row","sum"), Ingresos_Total=("Ingresos_Row","sum")))
+                .agg(Unid_Total=("Unid_Row","sum"),
+                     Ingresos_Total=("Ingresos_Row","sum"),
+                     Stock_Total=("Stock_Row","sum")))
 abc_fam = abc_from_values(fam_agg, "Ingresos_Total", a_cut, b_cut).merge(fam_meta, on="Familia_Key", how="left")
-cols_lvl1 = ["Familia_Key","Familia_Cod","Familia_Nombre","Unid_Total","Ingresos_Total","%Ingresos","%Acum","Clase_ABC"]
+cols_lvl1 = ["Familia_Key","Familia_Cod","Familia_Nombre","Unid_Total","Ingresos_Total","Stock_Total","%Ingresos","%Acum","Clase_ABC"]
 st.subheader("Nivel 1: ABC por **Familias** (ventas)")
 st.dataframe(abc_fam[cols_lvl1], use_container_width=True)
 
@@ -259,8 +267,10 @@ else:
     abc_sku_n2 = abc_within_group(sub_base, "Familia_Key", col_sku, "Ingresos_Row", a_cut, b_cut)
     abc_sku_n2 = abc_sku_n2.merge(fam_meta, on="Familia_Key", how="left").rename(columns={col_sku:"SKU"})
     st.subheader(f"Nivel 2: ABC por **SKU** (familias {clases_n2})")
-    st.dataframe(abc_sku_n2[["Familia_Key","Familia_Cod","Familia_Nombre","SKU","Unid_Total","Ingresos_Total","%Ingresos_Fam","%Acum_Fam","Clase_ABC_SKU"]],
-                 use_container_width=True)
+    st.dataframe(
+        abc_sku_n2[["Familia_Key","Familia_Cod","Familia_Nombre","SKU","Unid_Total","Ingresos_Total","Stock_Total","%Ingresos_Fam","%Acum_Fam","Clase_ABC_SKU"]],
+        use_container_width=True
+    )
     cnt = (abc_sku_n2.groupby("Clase_ABC_SKU").size().reindex(["A","B","C"]).rename("SKUs").fillna(0))
     df_cnt = cnt.reset_index().rename(columns={"Clase_ABC_SKU":"Clase"})
     st.altair_chart(
@@ -276,7 +286,7 @@ abc_sku_todos = abc_within_group(base, "Familia_Key", col_sku, "Ingresos_Row", a
                     .merge(fam_meta, on="Familia_Key", how="left").rename(columns={col_sku:"SKU"})
 
 # =========================
-# Ventas vs Demanda (mensual) — usa meses de Súper ABC (o autodetección)
+# Ventas vs Demanda (mensual)
 # =========================
 st.subheader("Ventas vs Demanda (mensual)")
 
@@ -345,12 +355,25 @@ else:
 super_outputs={}
 if enable_super and month_cols:
     st.subheader("Súper ABC (ABC × XYZ)")
+    # --- XYZ por Familia ---
     fam_month = df[[fam_key_source]+month_cols].copy(); fam_month["Familia_Key"]=normalize_text(fam_month[fam_key_source])
     xyz_fam = xyz_from_wide(fam_month, ["Familia_Key"], month_cols, cv_x, cv_y, "Familia_Key")
-    super_fam = (abc_fam[["Familia_Key","Clase_ABC","Ingresos_Total"]]
-                 .merge(xyz_fam[["Familia_Key","CV","Clase_XYZ"]], on="Familia_Key", how="left")
+
+    # Adjuntar STOCK por familia
+    stock_fam = (base.groupby("Familia_Key", as_index=False)["Stock_Row"].sum()
+                      .rename(columns={"Stock_Row":"Stock_Total"}))
+    xyz_fam = xyz_fam.merge(stock_fam, on="Familia_Key", how="left")
+
+    super_fam = (abc_fam[["Familia_Key","Clase_ABC","Ingresos_Total","Stock_Total"]]
+                 .merge(xyz_fam[["Familia_Key","CV","Clase_XYZ","Stock_Total"]]
+                        .rename(columns={"Stock_Total":"Stock_Total_XYZ"}),
+                        on="Familia_Key", how="left")
                  .merge(fam_meta, on="Familia_Key", how="left"))
+    # Homologar una sola columna de stock visible en salida
+    super_fam["Stock_Total"] = super_fam["Stock_Total"].fillna(super_fam["Stock_Total_XYZ"])
+    super_fam.drop(columns=["Stock_Total_XYZ"], inplace=True)
     super_fam["SuperABC"] = super_fam["Clase_ABC"].fillna("C")+super_fam["Clase_XYZ"].fillna("Z")
+
     fam_super_res = super_fam.groupby("SuperABC", as_index=False).agg(Items=("SuperABC","count"),
                                                                       Ingresos=("Ingresos_Total","sum"))
     st.altair_chart(
@@ -361,17 +384,29 @@ if enable_super and month_cols:
         ), use_container_width=True
     )
 
+    # --- XYZ por SKU ---
     sku_month = df[[fam_key_source, col_sku]+month_cols].copy(); sku_month["Familia_Key"]=normalize_text(sku_month[fam_key_source])
     xyz_sku = xyz_from_wide(sku_month, ["Familia_Key", col_sku], month_cols, cv_x, cv_y, "SKU").rename(columns={col_sku:"SKU"})
+
+    # Adjuntar STOCK por SKU dentro de familia
+    stock_sku = (base.groupby(["Familia_Key", col_sku], as_index=False)["Stock_Row"].sum()
+                      .rename(columns={col_sku:"SKU","Stock_Row":"Stock_Total"}))
+    xyz_sku = xyz_sku.merge(stock_sku, on=["Familia_Key","SKU"], how="left")
+
     if not sub_base.empty:
         sku_n2_keys = sub_base[["Familia_Key", col_sku]].drop_duplicates().rename(columns={col_sku:"SKU"})
         xyz_sku = xyz_sku.merge(sku_n2_keys, on=["Familia_Key","SKU"], how="inner")
+
     if not sub_base.empty and not abc_sku_n2.empty:
-        tmp_abc = abc_sku_n2[["Familia_Key","SKU","Clase_ABC_SKU","Ingresos_Total"]]
-        super_sku = (tmp_abc.merge(xyz_sku[["Familia_Key","SKU","CV","Clase_XYZ"]],
+        tmp_abc = abc_sku_n2[["Familia_Key","SKU","Clase_ABC_SKU","Ingresos_Total","Stock_Total"]]
+        super_sku = (tmp_abc.merge(xyz_sku[["Familia_Key","SKU","CV","Clase_XYZ","Stock_Total"]]
+                                   .rename(columns={"Stock_Total":"Stock_Total_XYZ"}),
                                    on=["Familia_Key","SKU"], how="left")
                              .merge(fam_meta, on="Familia_Key", how="left"))
+        super_sku["Stock_Total"] = super_sku["Stock_Total"].fillna(super_sku["Stock_Total_XYZ"])
+        super_sku.drop(columns=["Stock_Total_XYZ"], inplace=True)
         super_sku["SuperABC"]=super_sku["Clase_ABC_SKU"].fillna("C")+super_sku["Clase_XYZ"].fillna("Z")
+
         sku_super_res = super_sku.groupby("SuperABC", as_index=False).agg(SKUs=("SuperABC","count"),
                                                                           Ingresos=("Ingresos_Total","sum"))
         st.altair_chart(
@@ -438,4 +473,4 @@ st.download_button(
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 )
 
-st.success("¡Listo! ABC/Súper ABC y gráfico Ventas vs Demanda (sin módulo de almacén).")
+st.success("¡Listo! ABC/Súper ABC y gráfico Ventas vs Demanda, **con STOCK** en Familias/SKUs y XYZ.")
